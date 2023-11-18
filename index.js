@@ -3,17 +3,20 @@ import { uploadFile } from './post.js';
 import { throttle } from './throttle.js'
 import { createChunk } from "./createChunk.js";
 import sendRequest from './processRequests.js';
-const CHUNK_SIZE = 1025 * 1025 * 5 //5MB
+const CHUNK_SIZE = 1025 * 1025 * 7 //5MB
 const THREAD_COUNT = 4
 const cutFile = async file => {
     let finishCount = 0
-    return new Promise(resolve => {
+    return new Promise(async resolve => {
         const result = []
         const chunkCount = Math.ceil(file.size / CHUNK_SIZE)
-        if (chunkCount === 1) {
-            createChunk(file, 0, file.size, chunkCount).then(res => {
-                resolve([res])
-            })
+        if (chunkCount <= THREAD_COUNT) {
+            const proms = []
+            for (let i = 0; i < chunkCount; i++) {
+                proms.push(createChunk(file, i, CHUNK_SIZE, chunkCount))
+            }
+            const chunks = await Promise.all(proms)
+            resolve(chunks)
             return
         }
         const workChunkCount = Math.ceil(chunkCount / THREAD_COUNT)
@@ -23,9 +26,7 @@ const cutFile = async file => {
             if (endIndex > chunkCount) {
                 endIndex = chunkCount
             }
-            const worker = new Worker('./worker.js', {
-                type: 'module'
-            })
+            const worker = new Worker('./worker.js', { type: 'module' })
             worker.postMessage({ file, CHUNK_SIZE, startIndex, endIndex, chunkCount })
             worker.onmessage = e => {
                 for (let i = startIndex; i < endIndex; i++) {
@@ -64,7 +65,7 @@ const createDiv = (content) => {
 
 const upFile = async file => {
     const chunks = await cutFile(file)
-    sendRequest(chunks,4)
+    sendRequest(chunks, 4)
 }
 
 const fileList = watch([], throttle(data => {
@@ -73,7 +74,7 @@ const fileList = watch([], throttle(data => {
         const div2 = createDiv(`0/${item.size}`)
         const li = createLi([div1, div2])
         ul.appendChild(li)
-        console.log('item',item);
+        console.log('item', item);
         upFile(item)
     })
 }, 200))
@@ -125,8 +126,8 @@ const p = async (name, chunks, fileIndex) => {
         console.log('上传完毕');
         return
     }
-    const { hash, index, chunkCount, fileChunk,fileSize,start,end } = chunks[i]
-    console.log({ hash, index, chunkCount, fileChunk,fileSize,start,end });
+    const { hash, index, chunkCount, fileChunk, fileSize, start, end } = chunks[i]
+    console.log({ hash, index, chunkCount, fileChunk, fileSize, start, end });
     const formData = new FormData();
     formData.append("name", name);
     formData.append("total", chunkCount);
@@ -137,7 +138,7 @@ const p = async (name, chunks, fileIndex) => {
     formData.append("fileSize", fileSize);
     formData.append("fileChunk", fileChunk);
 
-    uploadFile('http://localhost:3001/upload', formData,({fileName,fileSize,loadedSize})=>{
+    uploadFile('http://localhost:3001/upload', formData, ({ fileName, fileSize, loadedSize }) => {
         console.log(`${fileName}: ${loadedSize}/${fileSize}`);
     })
         .then(response => {

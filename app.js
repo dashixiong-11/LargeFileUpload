@@ -26,25 +26,47 @@ app.use(async (ctx, next) => {
     }
 });
 
+// function mergeChunks(filePath, totalChunks) {
+//     const writeStream = fs.createWriteStream(filePath);
+//     for (let i = 0; i < totalChunks; i++) {
+//         const chunkFilePath = `${filePath}_${i}`;
+//         const readStream = fs.createReadStream(chunkFilePath);
+//         console.log('readStream',  chunkFilePath);
+//         readStream.pipe(writeStream, { end: false });
+//         readStream.on('end', () => {
+//          //  fs.unlinkSync(chunkFilePath); // 删除已合并的分片文件
+//         });
+//     }
+// }
 function mergeChunks(filePath, totalChunks) {
-    const writeStream = fs.createWriteStream(filePath);
-    for (let i = 0; i < totalChunks; i++) {
-        const chunkFilePath = `${filePath}_${i}.dat`;
-        const readStream = fs.createReadStream(chunkFilePath);
-        readStream.pipe(writeStream, { end: false });
-        readStream.on('end', () => {
-            fs.unlinkSync(chunkFilePath); // 删除已合并的分片文件
-        });
-    }
+    return new Promise((resolve, reject) => {
+        const writeStream = fs.createWriteStream(filePath);
+        let i = 0;
+        function next() {
+            if (i >= totalChunks) {
+                writeStream.end();
+                resolve();
+                return;
+            }
+            const chunkFilePath = `${filePath}_${i}`;
+            const readStream = fs.createReadStream(chunkFilePath);
+            readStream.pipe(writeStream, { end: false });
+            readStream.on('end', () => {
+                fs.unlinkSync(chunkFilePath); // 删除已合并的分片文件
+                i++;
+                next();
+            });
+            readStream.on('error', reject);
+        }
+        next();
+    });
 }
 
 const fileChunkCountMap = new Map()
 const chunkDataMap = new Map();
 function combineChunks(filename) {
-    console.log('combineChunks', filename);
     const filePath = path.join(uploadChunkPath, filename);
     const writeStream = fs.createWriteStream(filePath);
-    console.log(chunkDataMap.get(filename));
     chunkDataMap.get(filename).forEach((data) => {
         writeStream.write(data);
     });
@@ -53,23 +75,26 @@ function combineChunks(filename) {
     chunkDataMap.delete(filename);
 }
 
-router.post('/upload', upload.single('fileChunk'), function (ctx) {
+router.post('/upload', upload.single('fileChunk'),async function (ctx) {
     const { hash, name, index, total } = ctx.request.body
     console.log(ctx.request.body);
     const { file } = ctx.request
-    const fileName = `${name}`; // 构建分片文件名
+    const fileName = `${name}`; 
     const filePath = path.join(uploadChunkPath, fileName);
-    fs.writeFileSync(`${filePath}_${index}.dat`, file.buffer);
+    // fs.renameSync(filePath,`${filePath}_${index}`)
+    fs.writeFileSync(`${filePath}_${index}`, file.buffer);
     fileChunkCountMap.set(name, fileChunkCountMap.get(name) ? fileChunkCountMap.get(name) + 1 : 1)
     // const map = chunkDataMap.get(name) || new Map()
+    // console.log(file,file.buffer);
     // map.set(hash, file.buffer)
     // !chunkDataMap.has(name) && chunkDataMap.set(name, map)
-    // const chunkFilePath = `${filePath}.part${index}`;
 
-    console.log(fileChunkCountMap.get(name),total);
+    // if (chunkDataMap.get(name) && chunkDataMap.get(name).size == total) {
+    //        combineChunks(name)
+    // }
+
     if (fileChunkCountMap.get(name) >= parseInt(total)) {
-        //   combineChunks(name)
-        mergeChunks(filePath, total)
+        await mergeChunks(filePath, total);
         fileChunkCountMap.delete(name)
     }
     ctx.body = 200
